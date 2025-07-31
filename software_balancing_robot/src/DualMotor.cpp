@@ -6,34 +6,37 @@ DualMotor::DualMotor(Motor& left, Motor& right)
 void DualMotor::begin() {
     leftMotor.begin();
     rightMotor.begin();
+    stop();
 }
 
-void DualMotor::drive(float speed) {
+void DualMotor::setSpeed(float speed) {
     bool dir = speed >= 0;
-    int steps = abs(speed);
+    float absSpeed = fabs(speed);
     leftMotor.setDirection(dir);
     rightMotor.setDirection(dir);
-    for (int i = 0; i < steps; i++) {
-        leftMotor.step();
-        rightMotor.step();
-        delayMicroseconds(800); // einfache Geschwindigkeit
-    }
+    leftMotor.setSpeed(absSpeed);
+    rightMotor.setSpeed(absSpeed);
 }
 
-void DualMotor::driveDifferential(float leftSpeed, float rightSpeed) {
+void DualMotor::setDifferential(float leftSpeed, float rightSpeed) {
     leftMotor.setDirection(leftSpeed >= 0);
     rightMotor.setDirection(rightSpeed >= 0);
-    int lSteps = abs(leftSpeed);
-    int rSteps = abs(rightSpeed);
-    int maxSteps = max(lSteps, rSteps);
-
-    for (int i = 0; i < maxSteps; i++) {
-        if (i < lSteps) leftMotor.step();
-        if (i < rSteps) rightMotor.step();
-        delayMicroseconds(800);
-    }
+    leftMotor.setSpeed(fabs(leftSpeed));
+    rightMotor.setSpeed(fabs(rightSpeed));
 }
 
 void DualMotor::stop() {
-    // optional: set speed = 0 oder disable motors
+    leftMotor.setSpeed(0);
+    rightMotor.setSpeed(0);
+}
+
+long DualMotor::getAveragePosition() const {
+    long left = -leftMotor.getPosition();
+    long right = rightMotor.getPosition();  // ← Vorzeichen umkehren
+    return (left + right) / 2;
+}
+
+void DualMotor::resetPositions() {
+    leftMotor.resetPosition();
+    rightMotor.resetPosition();
 }

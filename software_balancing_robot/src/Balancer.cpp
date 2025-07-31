@@ -10,8 +10,11 @@ void Balancer::begin() {
 
 void Balancer::update() {
     imu.update();
+
     float angle = imu.getAngleX();
     float rate = imu.getGyroRateX();
+
     float control = controller.compute(angle, rate);
-    motors.drive(control);
+
+    motors.setSpeed(control); // direkte Ansteuerung
 }

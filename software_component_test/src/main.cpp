@@ -1,54 +1,99 @@
-#include <Wire.h>
-#include <MPU6050_light.h>
+#include <Arduino.h>
+#include "Wire.h"
+#include "I2Cdev.h"
+#include "MPU6050_6Axis_MotionApps20.h"
 
-MPU6050 mpu(Wire);
+// MPU6050 Objekt
+MPU6050 mpu;
 
-#define ENABLE_PIN   14
+// Interrupt Pin
+#define INTERRUPT_PIN 5
 
-#define STEP1_PIN    26
-#define DIR1_PIN     25
+bool dmpReady = false;
+uint8_t mpuIntStatus;
+uint8_t devStatus;
+uint16_t packetSize;
+uint16_t fifoCount;
+uint8_t fifoBuffer[64];
 
-#define STEP2_PIN    27
-#define DIR2_PIN     33
+// Orientierung
+Quaternion q;
+VectorFloat gravity;
+float ypr[3];
 
-// Schritt-Funktion: führt Schritte in gewünschter Richtung aus
-void stepMotor(int stepPin, int dirPin, bool direction, int steps, int delay_us) {
-  digitalWrite(dirPin, direction);
-  delayMicroseconds(50);  // WICHTIG
-  for (int i = 0; i < steps; i++) {
-    digitalWrite(stepPin, HIGH);
-    delayMicroseconds(delay_us);
-    digitalWrite(stepPin, LOW);
-    delayMicroseconds(delay_us);
-  }
+// Interrupt-Flag
+volatile bool mpuInterrupt = false;
+void IRAM_ATTR dmpDataReady() {
+  mpuInterrupt = true;
 }
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+  Wire.begin(21, 22);  // SDA = 21, SCL = 22 (ESP32 DevKit)
 
-  pinMode(ENABLE_PIN, OUTPUT);
-  digitalWrite(ENABLE_PIN, LOW); // Aktivieren (LOW = enable)
+  Serial.println("MPU6050 initialisieren...");
+  mpu.initialize();
 
-  pinMode(STEP1_PIN, OUTPUT);
-  pinMode(DIR1_PIN, OUTPUT);
-  pinMode(STEP2_PIN, OUTPUT);
-  pinMode(DIR2_PIN, OUTPUT);
+  // Verbindung prüfen
+  Serial.println(mpu.testConnection() ? "MPU6050 verbunden" : "Verbindung fehlgeschlagen");
 
-  Serial.println("Starte endlosen Motor-Test...");
+  // DMP starten
+  devStatus = mpu.dmpInitialize();
+
+  // Optional: Kalibrierung
+  mpu.setXGyroOffset(220);
+  mpu.setYGyroOffset(76);
+  mpu.setZGyroOffset(-85);
+  mpu.setZAccelOffset(1688);
+
+  if (devStatus == 0) {
+    Serial.println("DMP initialisiert");
+    mpu.setDMPEnabled(true);
+
+    // Interrupt einrichten
+    attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+    mpuIntStatus = mpu.getIntStatus();
+
+    dmpReady = true;
+    packetSize = mpu.dmpGetFIFOPacketSize();
+  } else {
+    Serial.print("Fehler beim Initialisieren des DMP: ");
+    Serial.println(devStatus);
+  }
 }
 
 void loop() {
-  Serial.println("Motor 1 vorwärts");
-  stepMotor(STEP1_PIN, DIR1_PIN, true, 200, 1500);
-  Serial.println("Motor 1 rückwärts");
-  stepMotor(STEP1_PIN, DIR1_PIN, false, 200, 1500);
+  if (!dmpReady) return;
 
-  delay(1000); // Pause
+  // Auf Interrupt oder FIFO warten
+  if (!mpuInterrupt && fifoCount < packetSize) return;
 
-  Serial.println("Motor 2 vorwärts");
-  stepMotor(STEP2_PIN, DIR2_PIN, true, 200, 1500);
-  Serial.println("Motor 2 rückwärts");
-  stepMotor(STEP2_PIN, DIR2_PIN, false, 200, 1500);
+  mpuInterrupt = false;
+  mpuIntStatus = mpu.getIntStatus();
+  fifoCount = mpu.getFIFOCount();
 
-  delay(1000); // Pause
+  if ((mpuIntStatus & 0x10) || fifoCount == 1024) {
+    mpu.resetFIFO();
+    Serial.println("FIFO overflow!");
+    return;
+  }
+
+  if (mpuIntStatus & 0x02) {
+    while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+
+    mpu.getFIFOBytes(fifoBuffer, packetSize);
+    fifoCount -= packetSize;
+
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+
+    Serial.print("Yaw: ");
+    Serial.print(ypr[0] * 180 / M_PI);
+    Serial.print(" | Pitch: ");
+    Serial.print(ypr[1] * 180 / M_PI);
+    Serial.print(" | Roll: ");
+    Serial.println(ypr[2] * 180 / M_PI);
+  }
 }
